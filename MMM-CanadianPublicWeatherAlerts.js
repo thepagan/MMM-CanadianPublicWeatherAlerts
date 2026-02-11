@@ -80,6 +80,15 @@ Module.register('MMM-CanadianPublicWeatherAlerts', {
         return wrapper;
     },
 
+    // Derive a severity CSS class from the alert title (Environment Canada includes YELLOW/ORANGE/RED)
+    getSeverityClass(rawTitle) {
+        const t = (rawTitle || "").toUpperCase();
+        if (t.includes("RED")) return "severity-red";
+        if (t.includes("ORANGE")) return "severity-orange";
+        if (t.includes("YELLOW")) return "severity-yellow";
+        return "";
+    },
+
 
     // Sets element variables to the current alert being displayed
     displayAlerts() {
@@ -121,7 +130,8 @@ Module.register('MMM-CanadianPublicWeatherAlerts', {
         const updatedRaw = (displayedAlert.updated && displayedAlert.updated[0]) ? displayedAlert.updated[0] : null;
         const timeText = updatedRaw ? moment(updatedRaw).fromNow() : "";
 
-        this.AlertTitle = `<div class="${this.name} alert-title bright">${titleText}</div>`;
+        const severityClass = this.getSeverityClass(rawTitle);
+        this.AlertTitle = `<div class="${this.name} alert-title bright ${severityClass}">${titleText}</div>`;
         this.AlertRegion = regionText ? `<div class="${this.name} alert-region">${regionText}</div>` : "";
         this.AlertTime = timeText ? `<div class="${this.name} alert-time">${timePrefix} ${timeText}</div>` : "";
 
