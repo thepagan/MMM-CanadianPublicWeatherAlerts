@@ -95,9 +95,28 @@ Module.register('MMM-CanadianPublicWeatherAlerts', {
         }
 
         const rawTitle = (displayedAlert.title && displayedAlert.title[0]) ? String(displayedAlert.title[0]) : "";
-        const parts = rawTitle.split(", ");
-        const titleText = parts[0] || rawTitle;
-        const regionText = (parts.length > 1) ? parts.slice(1).join(", ") : "";
+
+        // Environment Canada titles often look like:
+        // "YELLOW WARNING - SNOWFALL, Toronto Ontario"
+        // Reformat to: "SNOWFALL WARNING" (remove color, move WARNING/WATCH/etc after event type)
+        const titleMain = rawTitle.split(", ")[0] || rawTitle;
+        const regionParts = rawTitle.split(", ");
+        const regionText = (regionParts.length > 1) ? regionParts.slice(1).join(", ") : "";
+
+        let titleText = titleMain;
+        const mainParts = titleMain.split(" - ");
+        if (mainParts.length >= 2) {
+            const left = mainParts[0].trim();  // e.g. "YELLOW WARNING" or "ORANGE WATCH"
+            const eventType = mainParts.slice(1).join(" - ").trim(); // e.g. "SNOWFALL"
+            const leftWords = left.split(/\s+/).filter(Boolean);
+            const alertType = leftWords.length ? leftWords[leftWords.length - 1] : ""; // WARNING/WATCH/ADVISORY/etc
+
+            if (eventType && alertType) {
+                titleText = `${eventType} ${alertType}`;
+            } else if (eventType) {
+                titleText = eventType;
+            }
+        }
 
         const updatedRaw = (displayedAlert.updated && displayedAlert.updated[0]) ? displayedAlert.updated[0] : null;
         const timeText = updatedRaw ? moment(updatedRaw).fromNow() : "";
