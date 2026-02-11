@@ -46,7 +46,9 @@ Module.register('MMM-CanadianPublicWeatherAlerts', {
 
         this.sendSocketNotification('CPWA_CONFIG', this.config);
         if (this.config.periodicSync) {
-            setInterval( () => { this.syncClient() }, this.config.syncInterval);
+            // Avoid duplicate intervals if the module is hot-reloaded.
+            if (this.syncTimer) clearInterval(this.syncTimer);
+            this.syncTimer = setInterval(() => { this.syncClient(); }, this.config.syncInterval);
         }
         this.scheduleUpdate(this.config.updateInterval);
     },
@@ -56,7 +58,11 @@ Module.register('MMM-CanadianPublicWeatherAlerts', {
     scheduleUpdate(delay) {
         this.sendSocketNotification('CPWA_REQUEST_UPDATE', true);
 
-        setInterval( () => { this.sendSocketNotification('CPWA_REQUEST_UPDATE', true) }, delay);
+        // Avoid duplicate intervals if the module is hot-reloaded.
+        if (this.updateTimer) clearInterval(this.updateTimer);
+        this.updateTimer = setInterval(() => {
+            this.sendSocketNotification('CPWA_REQUEST_UPDATE', true);
+        }, delay);
     },
 
     // Actions to be performed when a periodic sync is requested
@@ -74,7 +80,7 @@ Module.register('MMM-CanadianPublicWeatherAlerts', {
             innerElem.innerHTML = "";
         }
         else {
-            innerElem.innerHTML = this.AlertTitle + this.AlertRegion + this.AlertTime;
+            innerElem.innerHTML = (this.AlertTitle || "") + (this.AlertRegion || "") + (this.AlertTime || "");
         }
         wrapper.appendChild(innerElem);
         return wrapper;
