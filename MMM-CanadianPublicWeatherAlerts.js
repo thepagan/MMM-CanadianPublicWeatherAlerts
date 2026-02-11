@@ -19,6 +19,8 @@ Module.register('MMM-CanadianPublicWeatherAlerts', {
         periodicSync: false, // If enabled, module will send config to node helper every user-defined interval (useful for server only setups)
         syncInterval: 600000, // once every ten minutes (ms)
 
+        debug: false,
+
         apiBase: 'weather.gc.ca'
     },
 
@@ -49,6 +51,11 @@ Module.register('MMM-CanadianPublicWeatherAlerts', {
             // Avoid duplicate intervals if the module is hot-reloaded.
             if (this.syncTimer) clearInterval(this.syncTimer);
             this.syncTimer = setInterval(() => { this.syncClient(); }, this.config.syncInterval);
+        }
+        else if (this.syncTimer) {
+            // Ensure no stale periodic sync timer remains when periodicSync is disabled
+            clearInterval(this.syncTimer);
+            this.syncTimer = null;
         }
         this.scheduleUpdate(this.config.updateInterval);
     },
@@ -88,11 +95,27 @@ Module.register('MMM-CanadianPublicWeatherAlerts', {
 
     // Derive a severity CSS class from the alert title (Environment Canada includes YELLOW/ORANGE/RED)
     getSeverityClass(rawTitle) {
-        const t = (rawTitle || "").toUpperCase();
-        if (t.includes("RED")) return "severity-red";
-        if (t.includes("ORANGE")) return "severity-orange";
-        if (t.includes("YELLOW")) return "severity-yellow";
-        return "";
+        const t = (rawTitle || "").trim().toUpperCase();
+
+        // EC titles commonly start with: "YELLOW ...", "ORANGE ...", or "RED ..."
+        const m = t.match(/^(YELLOW|ORANGE|RED)\b/);
+        if (!m) return "";
+
+        switch (m[1]) {
+            case "RED": return "severity-red";
+            case "ORANGE": return "severity-orange";
+            case "YELLOW": return "severity-yellow";
+            default: return "";
+        }
+    },
+
+
+    getSeverityRank(rawTitle) {
+        const cls = this.getSeverityClass(rawTitle);
+        if (cls === "severity-red") return 3;
+        if (cls === "severity-orange") return 2;
+        if (cls === "severity-yellow") return 1;
+        return 0;
     },
 
 
@@ -121,13 +144,17 @@ Module.register('MMM-CanadianPublicWeatherAlerts', {
         let titleText = titleMain;
         const mainParts = titleMain.split(" - ");
         if (mainParts.length >= 2) {
-            const left = mainParts[0].trim();  // e.g. "YELLOW WARNING" or "ORANGE WATCH"
+            const left = mainParts[0].trim(); // e.g. "YELLOW WARNING" or "RED SPECIAL WEATHER STATEMENT"
             const eventType = mainParts.slice(1).join(" - ").trim(); // e.g. "SNOWFALL"
-            const leftWords = left.split(/\s+/).filter(Boolean);
-            const alertType = leftWords.length ? leftWords[leftWords.length - 1] : ""; // WARNING/WATCH/ADVISORY/etc
 
-            if (eventType && alertType) {
-                titleText = `${eventType} ${alertType}`;
+            // Remove leading color token, preserve the remaining alert type phrase (may be multi-word)
+            const leftWords = left.split(/\s+/).filter(Boolean);
+            const first = (leftWords[0] || "").toUpperCase();
+            const isColor = first === "YELLOW" || first === "ORANGE" || first === "RED";
+            const alertTypePhrase = isColor ? leftWords.slice(1).join(" ") : left;
+
+            if (eventType && alertTypePhrase) {
+                titleText = `${eventType} ${alertTypePhrase}`;
             } else if (eventType) {
                 titleText = eventType;
             }
@@ -157,6 +184,11 @@ Module.register('MMM-CanadianPublicWeatherAlerts', {
         this.timer = setInterval(() => {
             if (!this.currentAlerts || this.currentAlerts.length === 0) return;
             this.currentAlertID = (this.currentAlertID + 1) % this.currentAlerts.length;
+            if (this.config.debug) {
+                const e = this.currentAlerts[this.currentAlertID];
+                const t = (e && e.title && e.title[0]) ? String(e.title[0]) : "";
+                Log.info(`[${this.name}] Rotating to alert ${this.currentAlertID + 1}/${this.currentAlerts.length}: ${t}`);
+            }
             this.displayAlerts();
         }, this.config.displayInterval + this.config.animationSpeed);
     },
@@ -178,7 +210,32 @@ Module.register('MMM-CanadianPublicWeatherAlerts', {
                     this.config.animationSpeed = this.baseAnimationSpeed;
                 }
 
-                this.currentAlerts = payload;
+                // Sort: higher severity first (RED > ORANGE > YELLOW), then newest updated first
+                const sorted = payload.slice().sort((a, b) => {
+                    const aTitle = (a && a.title && a.title[0]) ? String(a.title[0]) : "";
+                    const bTitle = (b && b.title && b.title[0]) ? String(b.title[0]) : "";
+
+                    const ra = this.getSeverityRank(aTitle);
+                    const rb = this.getSeverityRank(bTitle);
+                    if (ra !== rb) return rb - ra;
+
+                    const au = (a && a.updated && a.updated[0]) ? Date.parse(a.updated[0]) : NaN;
+                    const bu = (b && b.updated && b.updated[0]) ? Date.parse(b.updated[0]) : NaN;
+                    if (Number.isFinite(au) && Number.isFinite(bu) && au !== bu) return bu - au;
+
+                    return 0;
+                });
+
+                if (this.config.debug) {
+                    Log.info(`[${this.name}] Received ${payload.length} alerts; displaying ${sorted.length} after sort`);
+                    Log.info(`[${this.name}] Top 5 (title -> class): ` +
+                        sorted.slice(0, 5).map(e => {
+                            const t = (e && e.title && e.title[0]) ? String(e.title[0]) : "";
+                            return `${t} -> ${this.getSeverityClass(t) || "none"}`;
+                        }).join(" | "));
+                }
+
+                this.currentAlerts = sorted;
                 this.startDisplayTimer();
 
             } else {
