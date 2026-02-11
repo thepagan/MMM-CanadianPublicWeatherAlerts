@@ -39,6 +39,9 @@ Module.register('MMM-CanadianPublicWeatherAlerts', {
         this.loaded = false;
         this.currentAlerts = [];
 
+        // Preserve original animation speed so we can temporarily disable it for single-alert cases
+        this.baseAnimationSpeed = this.config.animationSpeed;
+
         moment.locale(this.config.lang);
 
         this.sendSocketNotification('CPWA_CONFIG', this.config);
@@ -80,13 +83,28 @@ Module.register('MMM-CanadianPublicWeatherAlerts', {
 
     // Sets element variables to the current alert being displayed
     displayAlerts() {
-        let timePrefix = (this.config.lang === "fr" ? "Publié" : "Issued"); // Sets prefix depending on configured language
-        let displayedAlert = this.currentAlerts[this.currentAlertID];
-        let title = displayedAlert['title'][0].split(", "); // Splits title so region can be a separate element
+        const timePrefix = (this.config.lang === "fr" ? "Publié" : "Issued");
+        const displayedAlert = this.currentAlerts[this.currentAlertID];
 
-        this.AlertTitle = `<div class="${this.name} alert-title bright">${title[0]}</div>`
-        this.AlertRegion = `<div class="${this.name} alert-region">${title[1]}</div>`
-        this.AlertTime = `<div class="${this.name} alert-time">${timePrefix} ${moment(displayedAlert['updated'][0], "YYYY-MM-DDTHH:mm:ssZ").fromNow()}</div>`
+        if (!displayedAlert) {
+            this.AlertTitle = "";
+            this.AlertRegion = "";
+            this.AlertTime = "";
+            this.updateDom(this.config.animationSpeed);
+            return;
+        }
+
+        const rawTitle = (displayedAlert.title && displayedAlert.title[0]) ? String(displayedAlert.title[0]) : "";
+        const parts = rawTitle.split(", ");
+        const titleText = parts[0] || rawTitle;
+        const regionText = (parts.length > 1) ? parts.slice(1).join(", ") : "";
+
+        const updatedRaw = (displayedAlert.updated && displayedAlert.updated[0]) ? displayedAlert.updated[0] : null;
+        const timeText = updatedRaw ? moment(updatedRaw).fromNow() : "";
+
+        this.AlertTitle = `<div class="${this.name} alert-title bright">${titleText}</div>`;
+        this.AlertRegion = regionText ? `<div class="${this.name} alert-region">${regionText}</div>` : "";
+        this.AlertTime = timeText ? `<div class="${this.name} alert-time">${timePrefix} ${timeText}</div>` : "";
 
         this.updateDom(this.config.animationSpeed);
     },
@@ -97,17 +115,15 @@ Module.register('MMM-CanadianPublicWeatherAlerts', {
         this.currentAlertID = 0;
         clearInterval(this.timer);
 
-        this.timer = setInterval( () => {
-            this.loaded = true;
-            this.displayAlerts();
+        // Display immediately so we don't wait for the first interval tick
+        this.loaded = true;
+        this.displayAlerts();
 
-            // Check to see if were at the last alert
-            if (this.currentAlertID === this.currentAlerts.length - 1) {
-                this.startDisplayTimer(); // Restart Timer
-            } else {
-                this.currentAlertID++; // Increment to next alert
-            } }, this.config.displayInterval + this.config.animationSpeed
-        ); // Time between each alert (speed + interval is used to prevent overlapping animations)
+        this.timer = setInterval(() => {
+            if (!this.currentAlerts || this.currentAlerts.length === 0) return;
+            this.currentAlertID = (this.currentAlertID + 1) % this.currentAlerts.length;
+            this.displayAlerts();
+        }, this.config.displayInterval + this.config.animationSpeed);
     },
 
 
@@ -119,9 +135,12 @@ Module.register('MMM-CanadianPublicWeatherAlerts', {
             this.currentAlerts = [];
 
             if (payload.length !== 0) {
-                // If only one alert, disable transition animation
+                // If only one alert, temporarily disable transition animation.
+                // Restore the original animation speed when multiple alerts are present.
                 if (payload.length === 1) {
                     this.config.animationSpeed = 0;
+                } else {
+                    this.config.animationSpeed = this.baseAnimationSpeed;
                 }
 
                 this.currentAlerts = payload;
@@ -132,6 +151,9 @@ Module.register('MMM-CanadianPublicWeatherAlerts', {
                 this.AlertRegion = "";
                 this.AlertTime = "";
                 this.updateDom();
+
+                clearInterval(this.timer);
+                this.config.animationSpeed = this.baseAnimationSpeed;
 
                 Log.log(`[${this.name}] No Alerts in effect for configured regions`);
             }
